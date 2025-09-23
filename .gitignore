@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+.env
+data/*.db
+cache/
+out/
+dist/
+*.log
+pm2.log
+*.pid
+
