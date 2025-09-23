@@ -1,0 +1,337 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BERTnews – Interactive Recommender</title>
+  <style>
+    :root {
+      --bg: #f7f9fc;
+      --panel: #ffffff;
+      --border: #e3e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #2563eb;
+      --primary-600: #1d4ed8;
+      --chip-bg: #eef2ff;
+      --chip-border: #c7d2fe;
+      --pos: #065f46;
+      --neg: #7f1d1d;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial; margin: 0; background: var(--bg); color: var(--text); }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .topbar { position: sticky; top: 0; backdrop-filter: saturate(180%) blur(8px); background: rgba(255,255,255,0.7); border-bottom: 1px solid var(--border); padding: 10px 20px; margin-bottom: 10px; }
+    .app-title { font-weight: 700; letter-spacing: 0.2px; }
+    .row { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .btn { padding: 8px 12px; margin-right: 6px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; cursor: pointer; color: var(--text); }
+    .btn:hover { background: #eef2f7; }
+    .btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
+    .btn.primary:hover { background: var(--primary-600); }
+    .btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--text); }
+    h1 { margin: 0 0 12px; }
+    h3 { margin: 6px 0 10px; }
+    small { color: var(--muted); }
+    .label-chip { display: inline-block; background: var(--chip-bg); color: #1e3a8a; border: 1px solid var(--chip-border); border-radius: 999px; padding: 3px 10px; margin: 2px 6px 2px 0; font-size: 12px; }
+    .exp-chip { display: inline-block; border-radius: 999px; padding: 2px 8px; margin: 2px 6px 2px 0; font-size: 12px; border: 1px solid var(--border); }
+    .exp-chip.pos { background: #ecfdf5; color: var(--pos); border-color: #d1fae5; }
+    .exp-chip.neg { background: #fef2f2; color: var(--neg); border-color: #fee2e2; }
+    .reco-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+    .title-row { display: flex; align-items: baseline; gap: 8px; }
+    .title-row a { color: var(--text); text-decoration: none; font-weight: 600; }
+    .title-row a:hover { text-decoration: underline; }
+    .score-badge { display: inline-block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+    .actions { margin-top: 8px; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #cfd7ff; border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin-left: 6px; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="topbar"><span class="app-title">BERTnews – Interactive Recommender</span></div>
+  <div class="container">
+  <div class="card">
+    <h3>Labels</h3>
+    <small>Enter 10–30 labels (comma-separated), e.g., Economy, Politics, Climate, Tech, Sport</small>
+    <input id="labels" placeholder="Economy, Politics, Climate, Tech, Sport">
+    <button class="btn primary" id="btn-score">Score First 100</button>
+    <button class="btn" id="btn-scan">Scan latest news</button>
+    <div id="labelSetHash" style="margin-top:6px"></div>
+  </div>
+
+  <div class="row">
+    <div>
+      <h3>Recommended</h3>
+      <div id="reco" class="reco-grid"></div>
+    </div>
+    <div>
+      <h3>User</h3>
+      <div class="card">
+        <label>User ID</label>
+        <input id="userId" value="demo-user">
+        <label>Alpha (learning rate, 0.0–1.0)</label>
+        <input id="alpha" type="number" step="0.05" value="0.1">
+        <button class="btn" id="btn-refresh">Refresh Recommendations</button>
+        <div id="profile" style="margin-top:8px"></div>
+      </div>
+      <div class="card">
+        <h3>Read</h3>
+        <small>Articles you’ve rated</small>
+        <div id="readlist"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (q) => document.querySelector(q);
+    const recoDiv = $('#reco');
+    const readDiv = $('#readlist');
+    const profileDiv = $('#profile');
+    const hashDiv = $('#labelSetHash');
+
+    let labelSetHash = null;
+    let labels = [];
+    let candidates = [];
+    const recoData = new Map();
+
+    // Local storage helpers
+    const setLS = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+    const getLS = (k) => { try { return localStorage.getItem(k); } catch { return null } };
+
+    function buildChips(expl, mode) {
+      if (!Array.isArray(expl)) return '';
+      let arr = [...expl];
+      if (mode === 'weight') {
+        arr.sort((a,b) => Math.abs((b.pref ?? 0)) - Math.abs((a.pref ?? 0)));
+      } else if (mode === 'cos') {
+        arr.sort((a,b) => Math.abs((b.sim ?? 0)) - Math.abs((a.sim ?? 0)));
+      } else {
+        arr.sort((a,b) => Math.abs((b.weight ?? 0)) - Math.abs((a.weight ?? 0)));
+      }
+      return arr.map(e => {
+        const cls = (e.weight ?? 0) >= 0 ? 'exp-chip pos' : 'exp-chip neg';
+        const val = ((e.weight ?? 0) >= 0 ? '+' : '') + (e.weight ?? 0).toFixed(3);
+        const sim = (typeof e.sim === 'number') ? `, cos=${e.sim.toFixed(3)}` : '';
+        const pref = (typeof e.pref === 'number') ? `, weight=${e.pref.toFixed(2)}` : '';
+        return `<span class="${cls}">${e.label}: ${val}${sim}${pref}</span>`;
+      }).join(' ');
+    }
+
+    async function post(url, body) {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    function setBtnLoading(btn, loading, textWhenLoading) {
+      if (!btn) return;
+      if (loading) {
+        if (!btn.dataset.originalText) btn.dataset.originalText = btn.textContent;
+        btn.textContent = textWhenLoading || btn.dataset.originalText || 'Loading…';
+        btn.insertAdjacentHTML('beforeend', '<span class="spinner"></span>');
+        btn.disabled = true;
+      } else {
+        btn.disabled = false;
+        const orig = btn.dataset.originalText;
+        if (orig) btn.textContent = orig;
+      }
+    }
+
+    function renderProfile(vec) {
+      if (!vec) { profileDiv.textContent = 'No profile yet'; return; }
+      const items = Object.entries(vec).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([l,v])=>`<span class="label-chip">${l}: ${v.toFixed(2)}</span>`).join(' ');
+      profileDiv.innerHTML = items || 'Empty';
+    }
+
+    function renderReadList(items) {
+      readDiv.innerHTML = items.map(r => {
+        const link = r.link ? `<div style="margin:6px 0"><a href="${r.link}" target="_blank" rel="noopener noreferrer">Open article</a></div>` : '';
+        const fb = r.feedback ? `<small>Feedback: ${r.feedback}</small>` : '';
+        return `<div class="card"><div class="title-row"><a href="${r.link || '#'}" target="_blank" rel="noopener noreferrer">${r.title}</a></div><small>${r.description || ''}</small>${link}${fb}</div>`;
+      }).join('');
+    }
+
+    function renderReco(items) {
+      recoDiv.innerHTML = items.map(it => {
+        const cardId = it.id ? `id-${encodeURIComponent(it.id)}` : `idx-${it.index}`;
+        const chips = buildChips(it.explanation || [], 'contrib');
+        const titleLink = it.link ? `<a href="${it.link}" target="_blank" rel="noopener noreferrer">${it.title || ''}</a>` : (it.title || '');
+        const idxAttr = it.index !== undefined ? `data-index="${it.index}"` : '';
+        const idAttr = it.id ? `data-id="${it.id}"` : '';
+        return `<div class="card">
+          <div class="title-row">${titleLink} <span class="score-badge">Score ${it.score.toFixed(3)}</span></div>
+          <div><small>${it.description || ''}</small></div>
+          <div style="margin-top:6px">
+            <small>Sort labels by:
+              <select class="chip-sort" data-card-id="${cardId}">
+                <option value="contrib" selected>contribution</option>
+                <option value="weight">weight</option>
+                <option value="cos">cosine</option>
+              </select>
+            </small>
+          </div>
+          <div class="chips" id="chips-${cardId}" style="margin-top:6px">${chips}</div>
+          <div class="actions">
+            <button class="btn" data-action="like" ${idxAttr} ${idAttr}>Like</button>
+            <button class="btn" data-action="dislike" ${idxAttr} ${idAttr}>Dislike</button>
+          </div>
+        </div>`;
+      }).join('');
+
+      // Cache explanations and wire sort handlers
+      items.forEach(it => {
+        const cardId = it.id ? `id-${encodeURIComponent(it.id)}` : `idx-${it.index}`;
+        recoData.set(cardId, it.explanation || []);
+      });
+      recoDiv.querySelectorAll('select.chip-sort').forEach(sel => {
+        sel.addEventListener('change', (e) => {
+          const mode = e.target.value;
+          const cardId = e.target.getAttribute('data-card-id');
+          const expl = recoData.get(cardId) || [];
+          const container = document.getElementById(`chips-${cardId}`);
+          if (container) container.innerHTML = buildChips(expl, mode);
+        });
+      });
+
+      recoDiv.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const action = e.target.getAttribute('data-action');
+          const idx = e.target.getAttribute('data-index');
+          const artId = e.target.getAttribute('data-id');
+          const alpha = Number($('#alpha').value || 0.1);
+          const user_id = $('#userId').value || 'demo-user';
+          const payload = { user_id, labelSetHash, feedback: action, alpha };
+          if (idx !== null && idx !== undefined) payload.article_index = Number(idx);
+          if (artId) payload.article_id = artId;
+          const card = e.target.closest('.card');
+          const likeBtn = card.querySelector('button[data-action="like"]');
+          const dislikeBtn = card.querySelector('button[data-action="dislike"]');
+          try {
+            setBtnLoading(e.target, true, action === 'like' ? 'Liking…' : 'Disliking…');
+            likeBtn.disabled = true; dislikeBtn.disabled = true;
+            await post('/profiles/feedback', payload);
+            await refreshReco();
+            await loadReadList(user_id);
+          } catch (err) {
+            alert('Action failed: ' + (err?.message || err));
+            setBtnLoading(e.target, false);
+            likeBtn.disabled = false; dislikeBtn.disabled = false;
+          }
+        });
+      });
+    }
+
+    async function refreshReco() {
+      const user_id = $('#userId').value || 'demo-user';
+      const topk = 10;
+      if (!labelSetHash) {
+        recoDiv.innerHTML = '<div class="card"><small>Define labels and click "Score First 100" to generate recommendations.</small></div>';
+        return;
+      }
+      const data = await post('/reco/rank_embeddings', { user_id, labelSetHash, topk });
+      renderReco(data.items || []);
+    }
+
+    async function loadReadList(user_id) {
+      try {
+        const res = await fetch(`/read/list?user_id=${encodeURIComponent(user_id)}`);
+        if (res.ok) {
+          const data = await res.json();
+          renderReadList(data.items || []);
+        }
+      } catch {}
+    }
+
+    $('#btn-score').addEventListener('click', async (ev) => {
+      labels = ($('#labels').value || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (labels.length === 0) {
+        alert('Please enter at least one label');
+        return;
+      }
+      setLS('labelsString', ($('#labels').value || ''));
+      const btn = ev.currentTarget;
+      const labelsInput = $('#labels');
+      try {
+        setBtnLoading(btn, true, 'Scoring…');
+        labelsInput.disabled = true;
+        // If we had an old label set, migrate profile first
+        const oldHash = labelSetHash;
+        if (oldHash) {
+          await post('/profiles/migrate', { user_id: ($('#userId').value || 'demo-user'), fromLabelSetHash: oldHash, toLabels: labels });
+        }
+        // Score top-100 for label cache (helps UI chips if needed)
+        const ares = await fetch('/articles/first100');
+        const { articles } = await ares.json();
+        const sres = await post('/topics/score_batch', { labels, articles, multi_label: true });
+        labelSetHash = sres.labelSetHash;
+        setLS('labelSetHash', labelSetHash);
+        hashDiv.textContent = `labelSetHash: ${labelSetHash}`;
+        const sc = await fetch(`/articles/scored?labelSetHash=${labelSetHash}`);
+        const { items } = await sc.json();
+        candidates = items;
+        await loadReadList($('#userId').value || 'demo-user');
+        await refreshReco();
+      } catch (err) {
+        alert('Scoring failed: ' + (err?.message || err));
+      } finally {
+        labelsInput.disabled = false;
+        setBtnLoading(btn, false);
+      }
+    });
+
+    $('#btn-refresh').addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      try {
+        setBtnLoading(btn, true, 'Refreshing…');
+        await refreshReco();
+        await loadReadList($('#userId').value || 'demo-user');
+      } catch (err) {
+        alert('Refresh failed: ' + (err?.message || err));
+      } finally {
+        setBtnLoading(btn, false);
+      }
+    });
+
+    $('#btn-scan').addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      try {
+        setBtnLoading(btn, true, 'Scanning…');
+        const res = await fetch('/ingest/rss_scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Scan failed');
+        alert(`Scanned feeds=${data.feeds}, inserted=${data.inserted}, skipped=${data.skipped}`);
+        if (labelSetHash) await refreshReco();
+      } catch (err) {
+        alert('Scan failed: ' + (err?.message || err));
+      } finally {
+        setBtnLoading(btn, false);
+      }
+    });
+
+    // Persist user id changes
+    $('#userId').addEventListener('change', (e) => setLS('userId', e.target.value || ''));
+    $('#userId').addEventListener('keyup', (e) => setLS('userId', e.target.value || ''));
+    // Persist labels input changes
+    $('#labels').addEventListener('change', (e) => setLS('labelsString', e.target.value || ''));
+    $('#labels').addEventListener('keyup', (e) => setLS('labelsString', e.target.value || ''));
+
+    // Restore session on load
+    (async function initFromStorage() {
+      const savedUser = getLS('userId');
+      if (savedUser) { $('#userId').value = savedUser; }
+      const savedLabels = getLS('labelsString');
+      if (savedLabels) { $('#labels').value = savedLabels; }
+      const savedHash = getLS('labelSetHash');
+      if (savedHash) {
+        labelSetHash = savedHash;
+        hashDiv.textContent = `labelSetHash: ${labelSetHash}`;
+        try {
+          await loadReadList($('#userId').value || 'demo-user');
+          await refreshReco();
+        } catch {}
+      }
+    })();
+  </script>
+</body>
+</html>
