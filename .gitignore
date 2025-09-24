@@ -8,4 +8,24 @@ dist/
 *.log
 pm2.log
 *.pid
+bbc_news.csv
+*.csv
+*.jsonl
+
+# Caches and large artifacts
+.cache/
+.pm2/
+downloads/
+*.bin
+*.pt
+*.onnx
+*.safetensors
+*.mp4
+*.zip
+*.tar
+*.tar.gz
+
+# Coverage/build
+coverage/
+build/
 
