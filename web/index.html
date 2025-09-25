@@ -223,10 +223,11 @@
         });
       });
 
-      // Like/Dislike handlers
-      recoDiv.querySelectorAll('button').forEach(btn => {
+      // Like/Dislike handlers (only bind to action buttons)
+      recoDiv.querySelectorAll('button[data-action]').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           const action = e.target.getAttribute('data-action');
+          if (action !== 'like' && action !== 'dislike') return;
           const idx = e.target.getAttribute('data-index');
           const artId = e.target.getAttribute('data-id');
           const alpha = Number($('#alpha').value || 0.1);
