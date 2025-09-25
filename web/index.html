@@ -30,6 +30,7 @@
     .btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
     .btn.primary:hover { background: var(--primary-600); }
     .btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+    .link-btn { border: none; background: none; color: var(--primary); cursor: pointer; padding: 0 0 0 6px; font-size: 12px; }
     input, textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--text); }
     h1 { margin: 0 0 12px; }
     h3 { margin: 6px 0 10px; }
@@ -159,9 +160,17 @@
         const titleLink = it.link ? `<a href="${it.link}" target="_blank" rel="noopener noreferrer">${it.title || ''}</a>` : (it.title || '');
         const idxAttr = it.index !== undefined ? `data-index="${it.index}"` : '';
         const idAttr = it.id ? `data-id="${it.id}"` : '';
+        const fullDesc = (it.description || '').toString();
+        const shortDesc = fullDesc.length > 200 ? fullDesc.slice(0, 200) + '…' : fullDesc;
+        const needsToggle = fullDesc.length > 200;
         return `<div class="card">
           <div class="title-row">${titleLink} <span class="score-badge">Score ${it.score.toFixed(3)}</span></div>
-          <div><small>${it.description || ''}</small></div>
+          <div>
+            <small>
+              <span class="desc" data-card-id="${cardId}" data-full="${encodeURIComponent(fullDesc)}">${shortDesc}</span>
+              ${needsToggle ? `<button class="link-btn read-more" data-card-id="${cardId}">Read more</button>` : ''}
+            </small>
+          </div>
           <div style="margin-top:6px">
             <small>Sort labels by:
               <select class="chip-sort" data-card-id="${cardId}">
@@ -194,6 +203,27 @@
         });
       });
 
+      // Read more / less handlers
+      recoDiv.querySelectorAll('button.read-more').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const cid = e.target.getAttribute('data-card-id');
+          const span = document.querySelector(`.desc[data-card-id="${cid}"]`);
+          if (!span) return;
+          const full = decodeURIComponent(span.getAttribute('data-full') || '');
+          const isExpanded = e.target.dataset.expanded === '1';
+          if (isExpanded) {
+            span.textContent = full.length > 200 ? (full.slice(0,200) + '…') : full;
+            e.target.textContent = 'Read more';
+            e.target.dataset.expanded = '0';
+          } else {
+            span.textContent = full;
+            e.target.textContent = 'Read less';
+            e.target.dataset.expanded = '1';
+          }
+        });
+      });
+
+      // Like/Dislike handlers
       recoDiv.querySelectorAll('button').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           const action = e.target.getAttribute('data-action');
