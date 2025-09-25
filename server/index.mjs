@@ -2,9 +2,7 @@ import express from 'express';
 import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
 import { pipeline } from '@xenova/transformers';
-import fs from 'node:fs';
 import path from 'node:path';
-import { parse as parseCSV } from 'csv-parse/sync';
 import RSSParser from 'rss-parser';
 
 const PORT = process.env.PORT || 3000;
@@ -66,7 +64,7 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 
 const inMemoryCache = new Map(); // key: labelSetHash|articleIndex -> scores
-let first100Cache = null; // [{ index, title, description, link }]
+// Legacy CSV cache removed. All content comes from DB via RSS ingest.
 
 function hashLabels(labels) {
   const norm = [...labels].map(s => s.trim().toLowerCase()).sort().join('|');
@@ -247,58 +245,25 @@ app.post('/topics/score_batch', async (req, res) => {
   }
 });
 
+// Register label set (store labels and return hash)
+app.post('/labels/register', (req, res) => {
+  try {
+    const { labels } = req.body || {};
+    if (!Array.isArray(labels) || labels.length === 0) return res.status(400).json({ error: 'labels required' });
+    const labelSetHash = hashLabels(labels);
+    db.prepare('INSERT OR IGNORE INTO label_sets (label_set_hash, labels_json) VALUES (?, ?)')
+      .run(labelSetHash, JSON.stringify(labels));
+    res.json({ labelSetHash });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Serve static client
 app.use(express.static(path.resolve('/home/oliver/Documents/BERTnews/web')));
 
-// Return first 100 articles (title + description)
-app.get('/articles/first100', (req, res) => {
-  try {
-    if (!first100Cache) {
-      const fp = '/home/oliver/Documents/BERTnews/bbc_news.csv';
-      const csv = fs.readFileSync(fp, 'utf8');
-      const rows = parseCSV(csv, { columns: true, skip_empty_lines: true });
-      first100Cache = rows.slice(0, 100).map((r, i) => ({
-        index: i,
-        title: (r.title || '').toString(),
-        description: (r.description || '').toString(),
-        link: (r.link || '').toString(),
-      }));
-    }
-    const articles = first100Cache;
-    res.json({ articles });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Return first 100 with cached scores for a given labelSetHash
-app.get('/articles/scored', (req, res) => {
-  try {
-    const { labelSetHash } = req.query || {};
-    if (!labelSetHash) return res.status(400).json({ error: 'labelSetHash required' });
-    if (!first100Cache) {
-      const fpCSV = '/home/oliver/Documents/BERTnews/bbc_news.csv';
-      const csv = fs.readFileSync(fpCSV, 'utf8');
-      const rowsCSV = parseCSV(csv, { columns: true, skip_empty_lines: true });
-      first100Cache = rowsCSV.slice(0, 100).map((r, i) => ({
-        index: i,
-        title: (r.title || '').toString(),
-        description: (r.description || '').toString(),
-        link: (r.link || '').toString(),
-      }));
-    }
-    const stmt = db.prepare('SELECT scores_json FROM label_cache WHERE label_set_hash = ? AND article_index = ?');
-    const items = first100Cache.map(r => {
-      const row = stmt.get(labelSetHash, r.index);
-      return { index: r.index, title: r.title, description: r.description, link: r.link, scores: row ? JSON.parse(row.scores_json) : {} };
-    });
-    res.json({ items });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
+// Legacy CSV endpoints removed; all articles come from DB via RSS ingest
 
 app.post('/profiles/from_interactions', (req, res) => {
   try {
@@ -360,7 +325,7 @@ app.post('/profiles/migrate', (req, res) => {
 // Online feedback update: like/dislike an article to update user profile
 app.post('/profiles/feedback', async (req, res) => {
   try {
-    const { user_id, labelSetHash, article_index, article_id, feedback, alpha = 0.1 } = req.body || {};
+    const { user_id, labelSetHash, article_id, feedback, alpha = 0.1 } = req.body || {};
     if (!user_id || !labelSetHash || !['like','dislike'].includes(feedback)) {
       return res.status(400).json({ error: 'user_id, labelSetHash, feedback required' });
     }
@@ -370,55 +335,9 @@ app.post('/profiles/feedback', async (req, res) => {
     if (!ls) return res.status(400).json({ error: 'Unknown labelSetHash' });
     const labels = JSON.parse(ls.labels_json);
 
-    // Get or compute article scores (supports either first100 index or global article_id)
+    // Compute article scores/vector via DB id
     let scores = null;
-    if (typeof article_index === 'number') {
-      let row = db.prepare('SELECT scores_json FROM label_cache WHERE label_set_hash = ? AND article_index = ?')
-        .get(labelSetHash, article_index);
-      scores = row ? JSON.parse(row.scores_json) : null;
-      if (!scores) {
-        const model = await getZeroShot();
-        if (!first100Cache) {
-          const fpCSV = '/home/oliver/Documents/BERTnews/bbc_news.csv';
-          const csv = fs.readFileSync(fpCSV, 'utf8');
-          const rowsCSV = parseCSV(csv, { columns: true, skip_empty_lines: true });
-          first100Cache = rowsCSV.slice(0, 100).map((r, i) => ({
-            index: i,
-            title: (r.title || '').toString(),
-            description: (r.description || '').toString(),
-            link: (r.link || '').toString(),
-          }));
-        }
-        const art = first100Cache.find(x => x.index === article_index);
-        if (!art) return res.status(400).json({ error: 'Unknown article_index' });
-        const text = [art.title, art.description].filter(Boolean).join(' — ');
-        const out = await model(text, labels, { multi_label: true });
-        scores = {};
-        for (let k = 0; k < out.labels.length; k++) scores[out.labels[k]] = out.scores[k];
-        db.prepare('INSERT OR REPLACE INTO label_cache (label_set_hash, article_index, scores_json) VALUES (?, ?, ?)')
-          .run(labelSetHash, article_index, JSON.stringify(scores));
-        // compute article embedding for gating
-        const ef = await getEmbedder();
-        var articleVec = (await ef(text, { pooling: 'mean', normalize: true })).data;
-      } else {
-        // still compute article embedding (from cached first100 text) for gating
-        if (!first100Cache) {
-          const fpCSV = '/home/oliver/Documents/BERTnews/bbc_news.csv';
-          const csv = fs.readFileSync(fpCSV, 'utf8');
-          const rowsCSV = parseCSV(csv, { columns: true, skip_empty_lines: true });
-          first100Cache = rowsCSV.slice(0, 100).map((r, i) => ({
-            index: i,
-            title: (r.title || '').toString(),
-            description: (r.description || '').toString(),
-            link: (r.link || '').toString(),
-          }));
-        }
-        const art = first100Cache.find(x => x.index === article_index);
-        const text = art ? [art.title, art.description].filter(Boolean).join(' — ') : '';
-        const ef = await getEmbedder();
-        var articleVec = (await ef(text, { pooling: 'mean', normalize: true })).data;
-      }
-    } else if (article_id) {
+    if (article_id) {
       const model = await getZeroShot();
       const row = db.prepare('SELECT title, description FROM article_embeddings WHERE id = ?').get(article_id);
       if (!row) return res.status(400).json({ error: 'Unknown article_id' });
@@ -430,7 +349,7 @@ app.post('/profiles/feedback', async (req, res) => {
       const vrow = db.prepare('SELECT vector FROM article_embeddings WHERE id = ?').get(article_id);
       var articleVec = vrow ? bufferToFloat32Array(vrow.vector) : null;
     } else {
-      return res.status(400).json({ error: 'article_index or article_id required' });
+      return res.status(400).json({ error: 'article_id required' });
     }
 
     // Sparsify by s_i threshold/topK
@@ -469,23 +388,7 @@ app.post('/profiles/feedback', async (req, res) => {
 
     db.prepare('INSERT OR REPLACE INTO profiles (id, label_set_hash, vector_json) VALUES (?, ?, ?)')
       .run(user_id, labelSetHash, JSON.stringify(updated));
-    // Mark article as read with feedback
-    // Mark read by index (if provided)
-    if (typeof article_index === 'number') {
-      db.prepare('INSERT OR REPLACE INTO read_history (user_id, label_set_hash, article_index, feedback, ts) VALUES (?, ?, ?, ?, ?)')
-        .run(user_id, labelSetHash, article_index, feedback, Date.now());
-      if (first100Cache) {
-        const art = first100Cache.find(x => x.index === article_index);
-        if (art && art.link) {
-          const idRow = db.prepare('SELECT id FROM article_embeddings WHERE link = ?').get(art.link);
-          if (idRow?.id) {
-            db.prepare('INSERT OR REPLACE INTO read_history_id (user_id, label_set_hash, article_id, feedback, ts) VALUES (?, ?, ?, ?, ?)')
-              .run(user_id, labelSetHash, idRow.id, feedback, Date.now());
-          }
-        }
-      }
-    }
-    // Mark read by article_id (if provided)
+    // Mark read by article_id
     if (article_id) {
       db.prepare('INSERT OR REPLACE INTO read_history_id (user_id, label_set_hash, article_id, feedback, ts) VALUES (?, ?, ?, ?, ?)')
         .run(user_id, labelSetHash, article_id, feedback, Date.now());
@@ -664,13 +567,18 @@ app.post('/ingest/rss_scan', async (req, res) => {
     const parser = new RSSParser();
     const feeds = (
       req.body?.feeds || [
-        'https://feeds.bbci.co.uk/news/rss.xml',
-        'https://www.reutersagency.com/feed/?best-sectors=business-finance&post_type=best',
-        'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
+        'https://www.reuters.com/world/rss',
+        'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml',
+        'https://feeds.washingtonpost.com/rss/world',
         'https://www.aljazeera.com/xml/rss/all.xml',
+        'https://www.theguardian.com/world/rss',
+        'https://feeds.a.dj.com/rss/RSSWorldNews.xml',
+        'https://feeds.skynews.com/feeds/rss/world.xml',
+        'https://www.cnn.com/rss/edition_world.rss',
         'https://feeds.feedburner.com/TechCrunch/',
+        'https://www.theverge.com/rss/index.xml'
       ]
-    ).slice(0, 20);
+    ).slice(0, 25);
 
     const existingRows = db.prepare('SELECT id, link, title, description FROM article_embeddings').all();
     const known = new Map(existingRows.map(r => [r.link, r]));
@@ -778,14 +686,6 @@ app.get('/read/list', (req, res) => {
     const { user_id } = req.query || {};
     if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
-    // From top-100 (index-based)
-    const idxRows = db.prepare('SELECT article_index, feedback, ts FROM read_history WHERE user_id = ? ORDER BY ts DESC')
-      .all(user_id);
-    const idxItems = (first100Cache || []).filter(a => idxRows.some(r => r.article_index === a.index)).map(a => {
-      const r = idxRows.find(x => x.article_index === a.index);
-      return { id: a.link || String(a.index), title: a.title, description: a.description, link: a.link, feedback: r.feedback, ts: r.ts };
-    });
-
     // From full dataset (id-based)
     const idRows = db.prepare('SELECT article_id, feedback, ts FROM read_history_id WHERE user_id = ? ORDER BY ts DESC')
       .all(user_id);
@@ -798,7 +698,7 @@ app.get('/read/list', (req, res) => {
     // Merge and dedupe by id
     const seen = new Set();
     const merged = [];
-    for (const it of [...idItems, ...idxItems]) {
+    for (const it of idItems) {
       if (seen.has(it.id)) continue;
       seen.add(it.id);
       merged.push(it);

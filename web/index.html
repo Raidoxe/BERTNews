@@ -55,7 +55,7 @@
     <h3>Labels</h3>
     <small>Enter 10–30 labels (comma-separated), e.g., Economy, Politics, Climate, Tech, Sport</small>
     <input id="labels" placeholder="Economy, Politics, Climate, Tech, Sport">
-    <button class="btn primary" id="btn-score">Score First 100</button>
+    <button class="btn primary" id="btn-score">Save Labels</button>
     <button class="btn" id="btn-scan">Scan latest news</button>
     <div id="labelSetHash" style="margin-top:6px"></div>
   </div>
@@ -260,16 +260,12 @@
         if (oldHash) {
           await post('/profiles/migrate', { user_id: ($('#userId').value || 'demo-user'), fromLabelSetHash: oldHash, toLabels: labels });
         }
-        // Score top-100 for label cache (helps UI chips if needed)
-        const ares = await fetch('/articles/first100');
-        const { articles } = await ares.json();
-        const sres = await post('/topics/score_batch', { labels, articles, multi_label: true });
+        // Register labels only (no legacy CSV). Cache label set for later use.
+        const sres = await post('/labels/register', { labels });
         labelSetHash = sres.labelSetHash;
         setLS('labelSetHash', labelSetHash);
         hashDiv.textContent = `labelSetHash: ${labelSetHash}`;
-        const sc = await fetch(`/articles/scored?labelSetHash=${labelSetHash}`);
-        const { items } = await sc.json();
-        candidates = items;
+        // After saving labels, refresh recommendations from DB-only corpus
         await loadReadList($('#userId').value || 'demo-user');
         await refreshReco();
       } catch (err) {
