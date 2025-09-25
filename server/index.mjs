@@ -567,6 +567,7 @@ app.post('/ingest/rss_scan', async (req, res) => {
     const parser = new RSSParser();
     const feeds = (
       req.body?.feeds || [
+        // General/world
         'https://www.reuters.com/world/rss',
         'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml',
         'https://feeds.washingtonpost.com/rss/world',
@@ -575,10 +576,21 @@ app.post('/ingest/rss_scan', async (req, res) => {
         'https://feeds.a.dj.com/rss/RSSWorldNews.xml',
         'https://feeds.skynews.com/feeds/rss/world.xml',
         'https://www.cnn.com/rss/edition_world.rss',
+        'https://feeds.bbci.co.uk/news/world/rss.xml',
+        'https://feeds.npr.org/1001/rss.xml',
+        'https://www.cbsnews.com/latest/rss/main',
+        'https://www.usatoday.com/rss/news/',
+        'https://www.telegraph.co.uk/news/rss.xml',
+        'https://www.independent.co.uk/news/world/rss',
+        'https://time.com/feed/',
+        'https://www.politico.com/rss/politics-news.xml',
+        'https://www.theatlantic.com/feed/all/',
+        // Tech/business (helps variety)
         'https://feeds.feedburner.com/TechCrunch/',
-        'https://www.theverge.com/rss/index.xml'
+        'https://www.theverge.com/rss/index.xml',
+        'https://www.cnbc.com/id/100003114/device/rss/rss.html'
       ]
-    ).slice(0, 25);
+    ).slice(0, 40);
 
     const existingRows = db.prepare('SELECT id, link, title, description FROM article_embeddings').all();
     const known = new Map(existingRows.map(r => [r.link, r]));
