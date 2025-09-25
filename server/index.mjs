@@ -6,7 +6,7 @@ import path from 'node:path';
 import RSSParser from 'rss-parser';
 
 const PORT = process.env.PORT || 3000;
-const DB_PATH = process.env.DB_PATH || '/home/oliver/Documents/BERTnews/data/app.db';
+const DB_PATH = process.env.DB_PATH || path.resolve(process.cwd(), 'data/app.db');
 // Gated learning hyperparameters (can be overridden by env)
 const GATED_ALPHA = process.env.GATED_ALPHA ? Number(process.env.GATED_ALPHA) : 0.1;
 const GATED_TAU = process.env.GATED_TAU ? Number(process.env.GATED_TAU) : 0.1;
@@ -261,7 +261,8 @@ app.post('/labels/register', (req, res) => {
 });
 
 // Serve static client
-app.use(express.static(path.resolve('/home/oliver/Documents/BERTnews/web')));
+const WEB_ROOT = process.env.WEB_ROOT || path.resolve(process.cwd(), 'web');
+app.use(express.static(WEB_ROOT));
 
 // Legacy CSV endpoints removed; all articles come from DB via RSS ingest
 

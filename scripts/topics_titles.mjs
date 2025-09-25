@@ -3,8 +3,8 @@ import path from 'node:path';
 import { parse } from 'csv-parse';
 import { pipeline } from '@xenova/transformers';
 
-const CSV_PATH = path.resolve('/home/oliver/Documents/BERTnews/bbc_news.csv');
-const OUTPUT_PATH = path.resolve('/home/oliver/Documents/BERTnews/out/topics_titles_first100.jsonl');
+const CSV_PATH = process.env.CSV_PATH || path.resolve(process.cwd(), 'bbc_news.csv');
+const OUTPUT_PATH = process.env.OUTPUT_PATH || path.resolve(process.cwd(), 'out/topics_titles_first100.jsonl');
 const MAX_ROWS = 100;
 const K_NEIGHBORS = 10;
 

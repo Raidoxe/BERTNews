@@ -3,19 +3,19 @@ import path from 'node:path';
 
 const INPUT_PATH = process.argv[2]
   ? path.resolve(process.argv[2])
-  : path.resolve('/home/oliver/Documents/BERTnews/out/ner_merged_first100.jsonl');
+  : (process.env.NER_JSONL || path.resolve(process.cwd(), 'out/ner_merged_first100.jsonl'));
 
 const TOPICS_PATH = process.argv[3]
   ? path.resolve(process.argv[3])
-  : path.resolve('/home/oliver/Documents/BERTnews/out/topics_titles_first100.jsonl');
+  : (process.env.TOPICS_TITLES_JSONL || path.resolve(process.cwd(), 'out/topics_titles_first100.jsonl'));
 
 const KEYWORDS_PATH = process.argv[4]
   ? path.resolve(process.argv[4])
-  : path.resolve('/home/oliver/Documents/BERTnews/out/topic_keywords_first100.jsonl');
+  : (process.env.TOPIC_KEYWORDS_JSONL || path.resolve(process.cwd(), 'out/topic_keywords_first100.jsonl'));
 
 const ZSCORES_PATH = process.argv[5]
   ? path.resolve(process.argv[5])
-  : path.resolve('/home/oliver/Documents/BERTnews/out/zero_shot_scores_first100.jsonl');
+  : (process.env.ZERO_SHOT_SCORES_JSONL || path.resolve(process.cwd(), 'out/zero_shot_scores_first100.jsonl'));
 
 function formatEntityList(list) {
   return list

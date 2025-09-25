@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const INPUT_JSONL = path.resolve('/home/oliver/Documents/BERTnews/out/ner_merged_first100.jsonl');
-const OUTPUT_JSONL = path.resolve('/home/oliver/Documents/BERTnews/out/zero_shot_scores_first100.jsonl');
+const INPUT_JSONL = process.env.INPUT_JSONL || path.resolve(process.cwd(), 'out/ner_merged_first100.jsonl');
+const OUTPUT_JSONL = process.env.OUTPUT_JSONL || path.resolve(process.cwd(), 'out/zero_shot_scores_first100.jsonl');
 const API_URL = process.env.API_URL || 'http://localhost:3000/topics/score_batch';
 
 function parseCliLabels(argv) {

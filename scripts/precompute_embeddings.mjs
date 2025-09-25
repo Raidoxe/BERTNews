@@ -4,8 +4,8 @@ import Database from 'better-sqlite3';
 import { parse as parseCSV } from 'csv-parse/sync';
 import { pipeline } from '@xenova/transformers';
 
-const CSV_PATH = path.resolve('/home/oliver/Documents/BERTnews/bbc_news.csv');
-const DB_PATH = process.env.DB_PATH || '/home/oliver/Documents/BERTnews/data/app.db';
+const CSV_PATH = process.env.CSV_PATH || path.resolve(process.cwd(), 'bbc_news.csv');
+const DB_PATH = process.env.DB_PATH || path.resolve(process.cwd(), 'data/app.db');
 const MAX_ROWS = Number(process.env.MAX_ROWS || 0); // 0 = all
 
 function articleIdFromRow(row) {
